@@ -29,7 +29,7 @@ The rover includes example code for:
 
 The code is intended to provide a starting point for writing and testing your own rover programs.
 
-Code fore testing the hardware can be found in the `software/test/` folder.
+Code fore testing the hardware can be found in the `software/example/` folder.
 
 ## PCB Preview
 
