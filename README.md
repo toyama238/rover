@@ -19,18 +19,23 @@ The rover is equipped with several sensors and components and can be used as a p
 ## Schematics and PCB Layout
 
 The schematics and PCB layout can be found in the `hardware/` folder.
+Both are made in EasyEDA Pro, a completly free software.
 
 ## Code
 
-The rover includes example code for:
+The code is written in Arduino IDE with the Esp32-C3 board.
 
-* Line following
-* Autonomous obstacle avoidance
+The rover contains a code for `software/rover_software.ino`:
 
-The code is intended to provide a starting point for writing and testing your own rover programs.
+* following a line
+* avoiding obstacles
+
+The code can be a starting point for writing and testing your own rover programs.
+Feel free to extend the code or even write your complete own code from scretch.
 
 Code fore testing the hardware can be found in the `software/example/` folder.
 
-## PCB Preview
+## Preview
 
-![PCB Preview](images/preview.png)
+![PCB Preview](images/pcb-preview.png)
+![Schematics Preview](images/schematics.png)
