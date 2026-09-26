@@ -23,9 +23,9 @@ Both are made in EasyEDA Pro, a completly free software.
 
 ## Code
 
-The code is written in Arduino IDE with the Esp32-C3 board.
+The code is written in MycroPython with Thonny as IDE on the Esp32-C3 board.
 
-The rover contains a code for `software/rover_software.ino`:
+The rover contains code for `software/`:
 
 * following a line
 * avoiding obstacles
