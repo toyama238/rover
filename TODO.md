@@ -3,13 +3,13 @@
 - Info-Flyer (oder einfach Plakat?)
 - Teile zusammenstellen
 - Micropython auf Mikrocontroller aufspielen und einfaches Testprogramm
+- Tischtennisbälle kaufen
+
 
 # TODOs für die Makerfaire
 - 3D-Drucke
 - Platinen bestücken
 - Platinen prüfen
-- USB-Kabel erstellen und anbauen
-- Kabel für Optosensoren
 - Kabel für ToF
 - ToF-Sensoren löten
 - Micropython auf Mikrocontroller aufspielen
@@ -19,4 +19,5 @@
 - Aufbauanleitung erstellen
 - Aufbauanleitung laminieren
 - Github fertigstellen
-
+- Crawler und FPV-Kamera testen
+- Crawler-Akkus laden
