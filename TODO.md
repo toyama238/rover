@@ -12,7 +12,6 @@
 - Platinen prüfen
 - Kabel für ToF
 - ToF-Sensoren löten
-- Micropython auf Mikrocontroller aufspielen
 - Teilesets zusammenstellen
 - Software fertigstellen
 - Anleitung für Software auf Github
@@ -21,3 +20,23 @@
 - Github fertigstellen
 - Crawler und FPV-Kamera testen
 - Crawler-Akkus laden
+- 3D druck löcher bohren
+- Kabelbilder
+
+
+
+# Kartong Inhalt
+- 3D Parts (5-Teile)
+- PCB
+- Esp32-C3
+- Motoren (2x)
+- Räder (2x)
+- Powerbanl
+- ToF-Sensor
+- ToF-Kabel
+- (Scheinwerfer Led (2x))
+- Analog sensor
+- 4x Senkschrauben
+- bolzen-schraube (3mm länge) 3mm
+- mutter (2x) 3mm
+
