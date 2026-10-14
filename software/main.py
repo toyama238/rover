@@ -1,3 +1,6 @@
+# Copyright 2026
+# Author: Ruben D'Uva, Bernhard Schloss
+
 from machine import Pin, PWM, ADC, I2C
 import random
 import time
@@ -7,41 +10,41 @@ import rgbLED
 
 
 # ===========================================================
-# 1. KONFIGURATION
+# 1. CONFIGURATION
 # ===========================================================
 
-# Allgemein
-state = 0                          # 0 = Manuell, 1 = Hindernis, 2 = Linie
-MANUAL_SPEED = 60                  # Prozent
+# Generall
+state = 0                          # 0 = smartphone controll, 1 = obstacle avoidance, 2 = following line
+MANUAL_SPEED = 70                  # general speed
 LOOP_PAUSE_MS = 5
 DEBUG_INTERVAL_MS = 1000
 
-# Linienfolger
-LINE_SPEED = 55
+# following line
+LINE_SPEED = 60                    # speed for following the
 KP = 70
 SEARCH_SPEED = 35
 MAX_CORRECTION = 75
-MAX_SEARCH_TIME = 2000             # ms
+MAX_SEARCH_TIME = 2000             
 LINE_THRESHOLD = 30000
-DARK_IS_LOW = True                  # True: Schwarz = kleiner ADC-Wert
+DARK_IS_LOW = True                  
 
-# Hindernisvermeidung
-OBSTACLE_DISTANCE = 300            # mm
-AUTO_SPEED = 60
-EXTRA_TURN_TIME = 200              # ms nach Freigabe des Fahrwegs
-MAX_TURN_TIME = 5000               # ms, Suchdrehung begrenzen
-TOF_INTERVAL_MS = 50               # Sensor-Timing-Budget: 33 ms
-TOF_TIMEOUT_MS = 500               # Bei veralteten Messwerten anhalten
+# obstacle avoidance
+OBSTACLE_DISTANCE = 350            
+AUTO_SPEED = 70
+EXTRA_TURN_TIME = 50               
+MAX_TURN_TIME = 5000               # time until path finding failure
+TOF_INTERVAL_MS = 50               
+TOF_TIMEOUT_MS = 500               
 
-# Taster
+# Button
 DEBOUNCE_MS = 50
 
 
 # ===========================================================
-# 2. HARDWARE INITIALISIEREN
+# 2. initialize hardware
 # ===========================================================
 
-# ToF-Abstandssensor (VL53L0X) via I2C
+# ToF (VL53L0X) via I2C
 # GPIO6 = SDA, GPIO7 = SCL
 
 i2c = I2C(
@@ -55,22 +58,22 @@ vl53 = vl53l0x.VL53L0X(i2c)
 vl53.measurement_timing_budget = 33000
 vl53.start_continuous()
 
-# Motoren: je zwei PWM-Ausgänge für die Drehrichtung
+# motor
 left_motor_1 = PWM(Pin(10), freq=200, duty=0)
 left_motor_2 = PWM(Pin(8), freq=200, duty=0)
 right_motor_1 = PWM(Pin(9), freq=200, duty=0)
 right_motor_2 = PWM(Pin(20), freq=200, duty=0)
 
-# Physischer Modus-Taster an GPIO4, gegen GND
+# button at GPIO4, with pull-up
 button = Pin(4, Pin.IN, Pin.PULL_UP)
 
-# Analoge Linien-Sensoren
+# analog brightness sensors
 line_left = ADC(Pin(2))
 line_right = ADC(Pin(3))
 
 
 # ===========================================================
-# 3. LAUFZEITVARIABLEN UND TIMER
+# 3. runtime variables and timers
 # ===========================================================
 
 start_time = time.ticks_ms()
@@ -78,39 +81,39 @@ start_time = time.ticks_ms()
 ToF_timer = start_time
 debug_timer = start_time
 
-# ToF-Daten in Millimetern
+# ToF distance in millimeters
 distance = 0
 last_valid_tof = None
 
-# Hindernisvermeidung
+# obstacle avoidance
 changing_direction = False
 clear_distance_timer = None
 turn_start_timer = None
 turn_direction = 0
 turn_failed = False
 
-# Linienfolger
-last_line_direction = 0            # -1 = links, +1 = rechts
+# line following
+last_line_direction = 0            # -1 = left, +1 = right
 line_lost_timer = None
 
-# Entprellung
+# button debounce
 last_button_state = button.value()
 stable_button_state = last_button_state
 last_button_time = start_time
 
 
 # ===========================================================
-# 4. MOTOREN
+# 4. motor functions
 # ===========================================================
 
 def procent_in_PWM(procent):
-    """Wandelt 0–100 % in den 10-Bit-PWM-Wert um."""
+    """converts 0–100 % to a 10-bit PWM value."""
     procent = max(0, min(100, procent))
     return int(procent * 1023 / 100)
 
 
 def set_left_motor(procent):
-    """Positiv = vorwärts, negativ = rückwärts."""
+    """positive = forward, negative = backward."""
     if procent >= 0:
         left_motor_2.duty(0)
         left_motor_1.duty(procent_in_PWM(procent))
@@ -120,7 +123,7 @@ def set_left_motor(procent):
 
 
 def set_right_motor(procent):
-    """Positiv = vorwärts, negativ = rückwärts."""
+    """positive = forward, negative = backward."""
     if procent >= 0:
         right_motor_2.duty(0)
         right_motor_1.duty(procent_in_PWM(procent))
@@ -130,22 +133,43 @@ def set_right_motor(procent):
 
 
 def drive(left_speed, right_speed):
-    """Steuert beide Motoren unabhängig in Prozent (-100 bis +100)."""
+    """controls both motors separately in percent (-100 to +100)."""
     set_left_motor(left_speed)
     set_right_motor(right_speed)
 
 
 def stop_motors():
-    """Setzt beide Motoren auf null."""
+    """stops both motors."""
     drive(0, 0)
 
 
+def drive_straight(speed):
+    """Drive straight with persistent left/right trim from the webserver.
+
+    Positive calibration strengthens the left motor and weakens the right.
+    The same trim applies in reverse with the speed sign preserved.
+    Turning in place and the line-following P-controller are unaffected.
+    """
+    if speed == 0:
+        stop_motors()
+        return
+
+    trim = webserver.get_calibration()
+    direction = 1 if speed > 0 else -1
+    magnitude = abs(speed)
+
+    left_magnitude = max(0, min(100, magnitude + trim))
+    right_magnitude = max(0, min(100, magnitude - trim))
+
+    drive(direction * left_magnitude, direction * right_magnitude)
+
+
 # ===========================================================
-# 5. LINIENSENSOREN
+# 5. line sensors
 # ===========================================================
 
 def isDark(value):
-    """Erkennt Schwarz anhand der kalibrierten ADC-Schwelle."""
+    """detects black using the calibrated ADC threshold."""
     if DARK_IS_LOW:
         return value < LINE_THRESHOLD
     else:
@@ -157,7 +181,7 @@ def isLight(value):
 
 
 # ===========================================================
-# 6. MODUS WECHSELN
+# 6. change mode
 # ===========================================================
 
 def set_mode(new_state):
@@ -171,10 +195,10 @@ def set_mode(new_state):
     if new_state == state:
         return
 
-    # Erst Motoren anhalten, dann Modus wechseln
+    # stop motors before changing mode
     stop_motors()
 
-    # Laufende Automatiken zurücksetzen
+    # reset active control states
     changing_direction = False
     clear_distance_timer = None
     turn_start_timer = None
@@ -187,7 +211,7 @@ def set_mode(new_state):
     state = new_state
     webserver.set_state(state)
 
-    # Modus per RGB-LED anzeigen
+    # show current mode with RGB LED
     if state == 0:
         rgbLED.set_led("red", 30)
     elif state == 1:
@@ -195,11 +219,11 @@ def set_mode(new_state):
     elif state == 2:
         rgbLED.set_led("yellow", 30)
 
-    print("Mode changed:", state)
+
 
 
 # ===========================================================
-# 7. START
+# 7. start
 # ===========================================================
 
 stop_motors()
@@ -215,53 +239,53 @@ print("Rover gestartet")
 
 
 # ===========================================================
-# 8. HAUPTSCHLEIFE
+# 8. main loop
 # ===========================================================
 
 try:
     while True:
-        # Zeit am Schleifenbeginn: Performance-Messung ohne sleep()
+        # measure loop execution time without sleep()
         loop_start = time.ticks_us()
         now = time.ticks_ms()
 
         # ---------------------------------------------------
-        # 8.1 Webserver bearbeiten
+        # 8.1 handle webserver requests
         # ---------------------------------------------------
         webserver.update_webserver()
         command = webserver.get_command()
 
         # ---------------------------------------------------
-        # 8.2 Moduswechsel per Webseite
+        # 8.2 change mode via web interface
         # ---------------------------------------------------
         if command == "mode_next":
             set_mode(state + 1)
         elif command == "mode_prev":
             set_mode(state - 1)
         elif command == "state":
-            # Kompatibilität mit älteren Webserver-Versionen
+            # compatibility with older webserver versions
             set_mode(state + 1)
 
         # ---------------------------------------------------
-        # 8.3 Physischen Button entprellen
+        # 8.3 debounce physical button
         # ---------------------------------------------------
         button_state = button.value()
 
         if button_state != last_button_state:
             last_button_time = now
 
-        # Nur Zustandswechsel nach 50 ms stabilem Pegel akzeptieren
+        # accept button changes only after 50 ms of stable input
         if time.ticks_diff(now, last_button_time) >= DEBOUNCE_MS:
             if button_state != stable_button_state:
                 stable_button_state = button_state
 
-                # Pull-up: 0 bedeutet gedrückt
+                # pull-up: 0 means pressed
                 if stable_button_state == 0:
                     set_mode(state + 1)
 
         last_button_state = button_state
 
         # ---------------------------------------------------
-        # 8.4 Abstandssensor aktualisieren
+        # 8.4 update distance sensor
         # ---------------------------------------------------
         if time.ticks_diff(now, ToF_timer) >= TOF_INTERVAL_MS:
             ToF_timer = now
@@ -269,7 +293,7 @@ try:
             try:
                 reading = vl53.range
 
-                # Plausibilitätsprüfung; Grenzwerte ggf. an Treiber anpassen
+                # validate reading; adjust limits for the sensor driver if needed
                 if 0 < reading < 8190:
                     distance = reading
                     last_valid_tof = now
@@ -277,26 +301,26 @@ try:
             except Exception as error:
                 print("ToF error:", error)
 
-        # Keine Fahrt mit zu altem Abstandswert
+        # do not drive with outdated distance readings
         tof_ok = False
         if last_valid_tof is not None:
             if time.ticks_diff(now, last_valid_tof) < TOF_TIMEOUT_MS:
                 tof_ok = True
 
         # ---------------------------------------------------
-        # 8.5 Liniensensoren lesen
+        # 8.5 read line sensors
         # ---------------------------------------------------
         sensLinks = line_left.read_u16()
         sensRechts = line_right.read_u16()
 
         # ---------------------------------------------------
-        # 8.6 STATE 0: Manuelle Steuerung
+        # 8.6 STATE 0: manual control
         # ---------------------------------------------------
         if state == 0:
             if command == "forward":
-                drive(MANUAL_SPEED, MANUAL_SPEED)
+                drive_straight(MANUAL_SPEED)
             elif command == "backward":
-                drive(-MANUAL_SPEED, -MANUAL_SPEED)
+                drive_straight(-MANUAL_SPEED)
             elif command == "left":
                 drive(-MANUAL_SPEED, MANUAL_SPEED)
             elif command == "right":
@@ -304,51 +328,40 @@ try:
             elif command == "stop":
                 stop_motors()
 
-            # Noch kein WLAN-Watchdog: Bei Verbindungsabbruch kann
-            # der letzte Fahrbefehl aktiv bleiben.
+            # no WLAN watchdog yet: if the connection is lost,
+            # the last driving command may remain active.
 
         # ---------------------------------------------------
-        # 8.7 STATE 1: Hindernisvermeidung
+        # 8.7 STATE 1: obstacle avoidance
         # ---------------------------------------------------
         elif state == 1:
             if turn_failed:
-                # Zu lange gedreht: bis zum nächsten Moduswechsel anhalten
+                # turn timeout: stop until the next mode change
                 stop_motors()
-
-            elif not tof_ok:
-                # Kein aktueller Abstandswert vorhanden
-                stop_motors()
-                changing_direction = False
-                clear_distance_timer = None
-                turn_start_timer = None
+                rgbLED.set_led("orange", 100)
 
             else:
                 if not changing_direction:
                     if distance <= OBSTACLE_DISTANCE:
-                        # Hindernis gefunden -> zufällige Suchrichtung
+                        # obstacle found -> changing direction
                         changing_direction = True
                         clear_distance_timer = None
                         turn_start_timer = now
 
                         if random.randint(0, 1) == 0:
                             turn_direction = -1
-                            print("Obstacle: turning left")
                         else:
                             turn_direction = 1
-                            print("Obstacle: turning right")
                     else:
-                        drive(AUTO_SPEED, AUTO_SPEED)
+                        drive_straight(AUTO_SPEED)
 
                 if changing_direction:
-                    # Drehzeit überwachen
                     if time.ticks_diff(now, turn_start_timer) >= MAX_TURN_TIME:
                         stop_motors()
                         changing_direction = False
                         clear_distance_timer = None
                         turn_failed = True
-                        print("Dreh-Timeout: Modus wechseln zum Zurücksetzen")
                     else:
-                        # Gespeicherte Drehrichtung weiterfahren
                         if turn_direction == -1:
                             drive(-AUTO_SPEED, AUTO_SPEED)
                         else:
@@ -360,25 +373,23 @@ try:
                             elif time.ticks_diff(now, clear_distance_timer) >= EXTRA_TURN_TIME:
                                 changing_direction = False
                                 clear_distance_timer = None
-                                drive(AUTO_SPEED, AUTO_SPEED)
-                                print("Path clear -> forward")
+                                drive_straight(AUTO_SPEED)
                         else:
                             clear_distance_timer = None
 
         # ---------------------------------------------------
-        # 8.8 STATE 2: P-Regler mit Liniensuche
+        # 8.8 STATE 2: P-controller with line search
         # ---------------------------------------------------
         elif state == 2:
             left_dark = isDark(sensLinks)
             right_dark = isDark(sensRechts)
 
             if not left_dark and not right_dark:
-                # Beide Sensoren Weiß -> mögliche verlorene Linie
-                # Funktioniert nur, wenn auf der Linie mindestens ein
-                # Sensor normalerweise Schwarz erkennt.
+                # both sensors detect white -> line may be lost
+                # works only if at least one sensor normally
+                # detects black while following the line.
                 if line_lost_timer is None:
                     line_lost_timer = now
-                    print("Line lost, direction:", last_line_direction)
 
                 search_time = time.ticks_diff(now, line_lost_timer)
 
@@ -392,7 +403,7 @@ try:
                     stop_motors()
 
             else:
-                # Linie erkannt: Proportionalregelung
+                # line detected: proportional control
                 line_lost_timer = None
 
                 error = (sensLinks - sensRechts) / 65535
@@ -413,25 +424,18 @@ try:
                 drive(int(left_speed), int(right_speed))
 
         # ---------------------------------------------------
-        # 8.9 Performance an Webserver übertragen
+        # 8.9 send performance data to webserver
         # ---------------------------------------------------
         loop_duration_us = time.ticks_diff(time.ticks_us(), loop_start)
         webserver.set_loop_time(loop_duration_us)
 
         # ---------------------------------------------------
-        # 8.10 Konsolen-Debug (einmal pro Sekunde)
+        # 8.10 console debug (once per second)
         # ---------------------------------------------------
         if time.ticks_diff(now, debug_timer) >= DEBUG_INTERVAL_MS:
             debug_timer = now
 
-            print(
-                "State:", state,
-                "| Command:", command,
-                "| Distance:", distance, "mm",
-                "| Left:", sensLinks,
-                "| Right:", sensRechts,
-                "| Loop:", loop_duration_us, "us"
-            )
+            
 
         time.sleep_ms(LOOP_PAUSE_MS)
 
@@ -439,3 +443,4 @@ except KeyboardInterrupt:
     print("Programm gestoppt")
 finally:
     stop_motors()
+

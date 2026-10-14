@@ -1,20 +1,82 @@
+# Copyright 2026
+# Author: Ruben D'Uva, Bernhard Schloss
+
 import network
 import socket
 import time
 import gc
 import machine
+import ubinascii
+import json
+
+
+# ------------------------------------------------------------
+# Configuration and internal state
+# ------------------------------------------------------------
 
 _ap = None
 _server = None
-_dns_server = None
-_dns_queries = 0
-_last_command = None
-_current_state = 0
-_current_distance = 0
-_last_received_command = "none"
-_loop_us = None
-_loop_max_us = None
 
+_last_command = None
+_last_received_command = "none"
+_current_state = 0
+_current_distance_cm = 0.0
+_loop_us = None
+
+# Get a convenient short ID. This is the currently configured STA MAC,
+# not necessarily a direct reading of the eFuse factory base MAC.
+_station = network.WLAN(network.STA_IF)
+_mac = ubinascii.hexlify(_station.config("mac"), ":").decode()
+_short_mac = ":".join(_mac.split(":")[3:])
+DEFAULT_SSID = "Rover " + _short_mac
+
+# Persistent trim in percentage points: positive = stronger left motor.
+# Loaded once at boot; saved only when the user presses +/-.
+CALIBRATION_FILE = "rover_calibration.json"
+CALIBRATION_MIN = -10
+CALIBRATION_MAX = 10
+_calibration = 0
+
+
+def _load_calibration():
+    global _calibration
+    try:
+        with open(CALIBRATION_FILE, "r") as file:
+            value = json.load(file).get("trim", 0)
+        value = int(value)
+        if CALIBRATION_MIN <= value <= CALIBRATION_MAX:
+            _calibration = value
+    except (OSError, ValueError, TypeError, AttributeError):
+        _calibration = 0
+
+
+def get_calibration():
+    """Signed straight-drive correction in percentage points."""
+    return _calibration
+
+
+def _change_calibration(delta):
+    """Adjust trim and persist it in flash on each actual change."""
+    global _calibration
+    new_value = max(CALIBRATION_MIN, min(CALIBRATION_MAX, _calibration + delta))
+    if new_value == _calibration:
+        return
+    # Write before activating the new value, so a failed write is visible.
+    try:
+        with open(CALIBRATION_FILE, "w") as file:
+            json.dump({"trim": new_value}, file)
+    except OSError as error:
+        print("Calibration save error:", error)
+        raise
+    _calibration = new_value
+
+
+_load_calibration()
+
+
+# ------------------------------------------------------------
+# Embedded HTML / CSS / JavaScript
+# ------------------------------------------------------------
 
 _html = """
 <!DOCTYPE html>
@@ -35,6 +97,7 @@ _html = """
             background: #171717;
             color: white;
             user-select: none;
+            -webkit-user-select: none;
         }
 
         h1 {
@@ -137,6 +200,13 @@ _html = """
         .debug-key {
             color: #888;
         }
+        .cal-row { display: flex; align-items: center; gap: 12px; justify-content: center; }
+        .cal-button { width: 70px; height: 58px; border: none; border-radius: 12px;
+            background: #3a3a3a; color: #fff; font-size: 29px; font-weight: bold;
+            cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+        .cal-button:active { background: #666; }
+        .cal-value { flex: 1; font-size: 30px; font-weight: bold; font-variant-numeric: tabular-nums; }
+        .cal-hint { color: #aaa; font-size: 12px; line-height: 1.5; margin: 12px 0 0; }
         .perf-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
         .perf-header h2 { margin: 0; font-size: 20px; }
         .perf-subtitle { color: #aaa; font-size: 12px; text-align: left; margin: 9px 0 16px; }
@@ -164,7 +234,6 @@ _html = """
 <body>
 
     <h1>Rover</h1>
-    <p class="subtitle">Roboter Steuerung</p>
 
     <div class="card">
         <div class="mode-switch">
@@ -228,6 +297,17 @@ _html = """
         <p>Die manuelle Steuerung ist deaktiviert.</p>
     </div>
 
+    <!-- Persistent motor trim, only for straight driving -->
+    <section id="calibration-panel" class="card">
+        <h2>Motor-Kalibrierung</h2>
+        <div class="cal-row">
+            <button class="cal-button" onclick="changeCalibration(-1)" aria-label="Weniger">&minus;</button>
+            <div class="cal-value" id="cal-value">0</div>
+            <button class="cal-button" onclick="changeCalibration(1)" aria-label="Mehr">+</button>
+        </div>
+        <p class="cal-hint">-10 bis +10</p>
+    </section>
+
     <section id="performance-panel" class="card">
         <div class="perf-header">
             <h2>ESP32-C3 Performance</h2>
@@ -254,8 +334,7 @@ _html = """
                 <div class="perf-value"><span id="perf-cpu-mhz">--</span><span class="perf-unit"> MHz</span></div>
             </div>
         </div>
-        <div class="perf-note">Loop-Anteil = Loop-Laufzeit / (Loop-Laufzeit + 5 ms Sleep).
-            Keine echte CPU-Auslastung: WLAN-/FreeRTOS-Tasks sind nicht enthalten.</div>
+        <div class="perf-note">Loop gibt an, wie lange ein Durchlauf des codes braucht. Loop-Anteil schätzt daraus die CPU-Auslastung.</div>
     </section>
 
     <div id="debug-panel">
@@ -312,6 +391,22 @@ _html = """
                 modeRequestPending = false;
             }
         }
+        let calibrationRequestPending = false;
+        async function changeCalibration(delta) {
+            if (calibrationRequestPending) return;
+            calibrationRequestPending = true;
+            const path = delta > 0 ? "/calibration/plus" : "/calibration/minus";
+            try {
+                const response = await fetch(path, {cache: "no-store"});
+                if (!response.ok) throw Error("HTTP " + response.status);
+                const data = await response.json();
+                debug("cal-value", (data.calibration > 0 ? "+" : "") + data.calibration);
+            } catch (error) {
+                debug("debug-status", "Kalibrierung fehlgeschlagen: " + error.message);
+            } finally {
+                calibrationRequestPending = false;
+            }
+        }
         function updateUI() {
             const state = Number(currentState);
             debug("debug-state", state);
@@ -330,6 +425,7 @@ _html = """
                 if (!response.ok) throw Error("HTTP " + response.status);
                 const data = await response.json();
                 currentState = Number(data.state);
+                debug("cal-value", (data.calibration > 0 ? "+" : "") + data.calibration);
                 debug("debug-distance", Number(data.distance).toFixed(1));
                 debug("debug-pending", data.pending_command || "none");
                 debug("debug-last", data.last_command || "none");
@@ -377,134 +473,99 @@ _html = """
 </html>
 """
 
+# Preparing the static response once avoids repeatedly allocating the page.
+_html_bytes = _html.encode("utf-8")
 
-def set_loop_time(duration_us):
-    # Vom Hauptprogramm am Ende jedes Schleifendurchlaufs aufrufen.
-    # Misst die Python-Hauptschleife, NICHT die gesamte CPU-Auslastung.
-    global _loop_us, _loop_max_us
-    _loop_us = int(duration_us)
-    if _loop_max_us is None or _loop_us > _loop_max_us:
-        _loop_max_us = _loop_us
 
+# ------------------------------------------------------------
+# Public API: data supplied by main.py
+# ------------------------------------------------------------
 
 def set_state(state):
+    """Update the mode visible to the browser: 0, 1 or 2."""
     global _current_state
-    _current_state = state
+    _current_state = int(state)
 
 
-def set_distance(distance):
-    global _current_distance
-    _current_distance = distance / 10
+def set_distance(distance_mm):
+    """Accept the ToF value in millimetres; display it in centimetres."""
+    global _current_distance_cm
+    _current_distance_cm = distance_mm / 10
+
+
+def set_loop_time(duration_us):
+    """Execution time of a main.py loop iteration, excluding sleep_ms()."""
+    global _loop_us
+    _loop_us = int(duration_us)
+
+
+def get_command():
+    """Read and consume the most recent browser command."""
+    global _last_command, _last_received_command
+
+    command = _last_command
+    _last_command = None
+
+    if command is not None:
+        _last_received_command = command
+
+    return command
+
+
+def get_ip():
+    """Return the access point IP, or None when Wi-Fi is stopped."""
+    if _ap is None:
+        return None
+    return _ap.ifconfig()[0]
 
 
 def check_for_running():
+    """Return True when the HTTP server has been started."""
     return _server is not None
 
 
-# Lokaler DNS-Responder fuer rover.move (UDP 53).
-# Beantwortet nur IPv4-A-Anfragen fuer diesen Namen.
-def _dns_update():
-    global _dns_queries
-    if _dns_server is None:
-        return
-    try:
-        request, address = _dns_server.recvfrom(512)
-    except OSError:
-        return  # Kein DNS-Paket vorhanden
+# ------------------------------------------------------------
+# Startup and shutdown
+# ------------------------------------------------------------
 
-    try:
-        if len(request) < 17 or request[2] & 0x80:
-            return  # Zu kurz oder bereits eine DNS-Antwort
-        if request[4:6] != b"\x00\x01":
-            return  # Genau eine DNS-Frage erwartet
-
-        pos = 12
-        labels = []
-        while pos < len(request):
-            n = request[pos]
-            pos += 1
-            if n == 0:
-                break
-            if n > 63 or pos + n > len(request):
-                return
-            labels.append(request[pos:pos+n].decode().lower())
-            pos += n
-        else:
-            return
-
-        if pos + 4 > len(request):
-            return
-        qtype = request[pos:pos+2]
-        qclass = request[pos+2:pos+4]
-        question = request[12:pos+4]
-        name = ".".join(labels)
-        is_ours = name == "rover.move" and qclass == b"\x00\x01"
-        if not is_ours:
-            return  # Andere Domains nicht beeinflussen
-
-        # Antwort mit IPv4-Adresse, falls A-Record angefragt wird.
-        if qtype == b"\x00\x01":
-            ip = bytes(int(x) for x in _ap.ifconfig()[0].split("."))
-            flags = b"\x81\x80"  # Standardantwort ohne Rekursionsserver
-            answer_count = b"\x00\x01"
-            answer = (b"\xc0\x0c" + b"\x00\x01" + b"\x00\x01"
-                      + b"\x00\x00\x00\x1e" + b"\x00\x04" + ip)
-        else:
-            flags = b"\x81\x80"  # z.B. AAAA: kein Treffer
-            answer_count = b"\x00\x00"
-            answer = b""
-
-        header = (request[:2] + flags + b"\x00\x01" + answer_count
-                  + b"\x00\x00\x00\x00")
-        _dns_server.sendto(header + question + answer, address)
-        _dns_queries += 1
-    except Exception as exc:
-        print("DNS error:", exc)
-
-
-def start_webserver(ssid="Rover1", password="rover123", port=80):
-    global _ap, _server, _dns_server
+def start_webserver(ssid=None, password="rover123", port=80):
+    """Start Wi-Fi AP and HTTP server (no DNS server)."""
+    global _ap, _server
 
     if _server is not None:
         return
 
-    network.hostname("rover")
+    if ssid is None:
+        ssid = DEFAULT_SSID
 
-    _ap = network.WLAN(network.AP_IF)
-    _ap.active(True)
-    _ap.config(essid=ssid, password=password)
+    ap = network.WLAN(network.AP_IF)
+    ap.active(True)
+    ap.config(essid=ssid, password=password)
 
-    while not _ap.active():
-        pass
+    server = None
+    try:
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("0.0.0.0", port))
+        server.listen(5)
+        server.setblocking(False)
+    except Exception:
+        if server is not None:
+            server.close()
+        ap.active(False)
+        raise
 
-    # DNS-Adresse des AP auf sich selbst setzen. Die Weitergabe durch DHCP
-    # ist firmwareabhaengig und muss am Client kontrolliert werden.
-    ip = _ap.ifconfig()[0]
-    _ap.ifconfig((ip, "255.255.255.0", ip, ip))
+    _ap = ap
+    _server = server
 
-    _dns_server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    _dns_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    _dns_server.bind(("0.0.0.0", 53))
-    _dns_server.setblocking(False)
-
-    _server = socket.socket()
-    _server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    _server.bind(("0.0.0.0", port))
-    _server.listen(5)
-    _server.settimeout(0)
-
-    print("Rover WLAN gestartet")
-    print("IP:", _ap.ifconfig()[0])
-    print("DNS-Name: http://rover.move")
-    print("Fallback: http://" + _ap.ifconfig()[0])
+    print("Rover WLAN gestartet:", ssid)
+    print("MAC (STA):", _mac)
+    print("Webseite: http://" + get_ip())
 
 
 def stop_webserver():
-    global _ap, _server, _dns_server
-
-    if _dns_server is not None:
-        _dns_server.close()
-        _dns_server = None
+    """Close the HTTP server and disable the access point."""
+    global _ap, _server
 
     if _server is not None:
         _server.close()
@@ -515,112 +576,103 @@ def stop_webserver():
         _ap = None
 
 
-def get_ip():
-    if _ap is None:
-        return None
+# ------------------------------------------------------------
+# HTTP helpers
+# ------------------------------------------------------------
 
-    return _ap.ifconfig()[0]
+def _send_response(client, body, content_type="text/plain", status=200):
+    """Send a complete response to a connected client."""
+    if isinstance(body, str):
+        body = body.encode("utf-8")
 
-
-def get_command():
-    global _last_command
-
-    global _last_received_command
-    command = _last_command
-    _last_command = None
-    if command is not None:
-        _last_received_command = command
-    return command
-
-
-def send_response(client, content, content_type="text/html"):
-    response = (
-        "HTTP/1.1 200 OK\r\n"
-        "Content-Type: " + content_type + "; charset=UTF-8\r\n"
-        "Cache-Control: no-cache\r\n"
+    header = (
+        ("HTTP/1.1 200 OK\r\n" if status == 200 else "HTTP/1.1 500 Internal Server Error\r\n")
+        + "Content-Type: " + content_type + "; charset=UTF-8\r\n"
+        "Content-Length: " + str(len(body)) + "\r\n"
+        "Cache-Control: no-store\r\n"
         "Connection: close\r\n"
         "\r\n"
-        + content
     )
 
-    client.send(response)
+    # MicroPython socket.write() sends the entire buffer for blocking sockets.
+    client.write(header.encode("utf-8"))
+    client.write(body)
 
+
+def _status():
+    """Collect the values used by the status and performance panels."""
+    return {
+        "state": _current_state,
+        "calibration": _calibration,
+        "distance": _current_distance_cm,
+        "pending_command": _last_command or "none",
+        "last_command": _last_received_command,
+        "uptime_ms": time.ticks_ms(),
+        "heap_free": gc.mem_free(),
+        "heap_used": gc.mem_alloc(),
+        "cpu_hz": machine.freq(),
+        "loop_us": _loop_us,
+    }
+
+
+# ------------------------------------------------------------
+# Poll once per main loop. Do not put a while True here.
+# ------------------------------------------------------------
 
 def update_webserver():
-    global _last_command, _last_received_command
-
-    _dns_update()
+    """Handle at most one pending HTTP request per call."""
+    global _last_command
 
     if _server is None:
         return
 
     try:
-        client, address = _server.accept()
+        client, _address = _server.accept()
     except OSError:
+        # No incoming request: immediately return to the motor control loop.
         return
 
     try:
-        request = client.recv(1024).decode()
+        # Avoid hanging forever if a client opens a connection but sends no data.
+        client.settimeout(0.1)
+        request = client.recv(1024)
+        if not request:
+            return
 
-        if "GET /forward " in request:
-            _last_command = "forward"
-            send_response(client, "OK", "text/plain")
+        # Parse the requested path from the first HTTP request line.
+        request_line = request.split(b"\r\n", 1)[0]
+        parts = request_line.split(b" ")
+        if len(parts) < 2 or parts[0] != b"GET":
+            return
+        path = parts[1]
 
-        elif "GET /backward " in request:
-            _last_command = "backward"
-            send_response(client, "OK", "text/plain")
+        if path == b"/status":
+            _send_response(client, json.dumps(_status()), "application/json")
 
-        elif "GET /left " in request:
-            _last_command = "left"
-            send_response(client, "OK", "text/plain")
+        elif path == b"/calibration/plus" or path == b"/calibration/minus":
+            # Save to flash only on user interaction, never on 200 ms polling.
+            try:
+                _change_calibration(1 if path == b"/calibration/plus" else -1)
+                _send_response(client, json.dumps({"calibration": _calibration}), "application/json")
+            except OSError:
+                _send_response(client, '{"error":"flash save failed"}', "application/json", 500)
 
-        elif "GET /right " in request:
-            _last_command = "right"
-            send_response(client, "OK", "text/plain")
+        elif path in (
+            b"/forward", b"/backward", b"/left", b"/right",
+            b"/stop", b"/mode_next", b"/mode_prev", b"/state"
+        ):
+            # main.py receives this command in its next get_command() call.
+            _last_command = path[1:].decode()
+            _send_response(client, "OK")
 
-        elif "GET /stop " in request:
-            _last_command = "stop"
-            send_response(client, "OK", "text/plain")
-
-        elif "GET /mode_next " in request:
-            _last_command = "mode_next"
-            send_response(client, "OK", "text/plain")
-
-        elif "GET /mode_prev " in request:
-            _last_command = "mode_prev"
-            send_response(client, "OK", "text/plain")
-
-        elif "GET /state " in request:
-            # Rueckwaertskompatibilitaet fuer alte Clients.
-            _last_command = "state"
-            send_response(client, "OK", "text/plain")
-
-        elif "GET /status " in request:
-            # Nur der MicroPython-Heap, nicht gesamter RAM inkl. WLAN/ESP-IDF.
-            heap_free = gc.mem_free()
-            heap_used = gc.mem_alloc()
-            status = (
-                '{"state": ' + str(_current_state)
-                + ', "distance": ' + str(_current_distance)
-                + ', "pending_command": "' + str(_last_command or "none") + '"'
-                + ', "last_command": "' + str(_last_received_command) + '"'
-                + ', "uptime_ms": ' + str(time.ticks_ms())
-                + ', "heap_free": ' + str(heap_free)
-                + ', "heap_used": ' + str(heap_used)
-                + ', "cpu_hz": ' + str(machine.freq())
-                + ', "loop_us": ' + (str(_loop_us) if _loop_us is not None else 'null')
-                + ', "loop_max_us": ' + (str(_loop_max_us) if _loop_max_us is not None else 'null')
-                + '}'
-            )
-
-            send_response(client, status, "application/json")
+        elif path == b"/" or path.startswith(b"/?"):
+            _send_response(client, _html_bytes, "text/html")
 
         else:
-            send_response(client, _html)
+            _send_response(client, "Not found")
 
-    except Exception as e:
-        print("Webserver error:", e)
+    except Exception as exc:
+        print("HTTP error:", exc)
 
     finally:
         client.close()
-
