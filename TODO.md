@@ -27,16 +27,17 @@
 
 # Kartong Inhalt
 - 3D Parts (5-Teile)
-- PCB
+- PCB + Motortreiber
 - Esp32-C3
 - Motoren (2x)
 - Räder (2x)
-- Powerbanl
+- Powerbank
 - ToF-Sensor
 - ToF-Kabel
 - (Scheinwerfer Led (2x))
 - Analog sensor
-- 4x Senkschrauben
-- bolzen-schraube (3mm länge) 3mm
-- mutter (2x) 3mm
+- Senkschrauben (4x)
+- bolzen-schraube M3x30
+- mutter (2x) M3
+- Kabelbinder (2x)
 
