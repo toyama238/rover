@@ -1,6 +1,3 @@
-# Copyright 2026
-# Author: Ruben D'Uva, Bernhard Schloss
-
 import network
 import socket
 import time
@@ -8,7 +5,6 @@ import gc
 import machine
 import ubinascii
 import json
-
 
 # ------------------------------------------------------------
 # Configuration and internal state
@@ -481,6 +477,7 @@ _html_bytes = _html.encode("utf-8")
 # Public API: data supplied by main.py
 # ------------------------------------------------------------
 
+
 def set_state(state):
     """Update the mode visible to the browser: 0, 1 or 2."""
     global _current_state
@@ -527,6 +524,7 @@ def check_for_running():
 # ------------------------------------------------------------
 # Startup and shutdown
 # ------------------------------------------------------------
+
 
 def start_webserver(ssid=None, password="rover123", port=80):
     """Start Wi-Fi AP and HTTP server (no DNS server)."""
@@ -580,14 +578,21 @@ def stop_webserver():
 # HTTP helpers
 # ------------------------------------------------------------
 
+
 def _send_response(client, body, content_type="text/plain", status=200):
     """Send a complete response to a connected client."""
     if isinstance(body, str):
         body = body.encode("utf-8")
 
     header = (
-        ("HTTP/1.1 200 OK\r\n" if status == 200 else "HTTP/1.1 500 Internal Server Error\r\n")
-        + "Content-Type: " + content_type + "; charset=UTF-8\r\n"
+        (
+            "HTTP/1.1 200 OK\r\n"
+            if status == 200
+            else "HTTP/1.1 500 Internal Server Error\r\n"
+        )
+        + "Content-Type: "
+        + content_type
+        + "; charset=UTF-8\r\n"
         "Content-Length: " + str(len(body)) + "\r\n"
         "Cache-Control: no-store\r\n"
         "Connection: close\r\n"
@@ -618,6 +623,7 @@ def _status():
 # ------------------------------------------------------------
 # Poll once per main loop. Do not put a while True here.
 # ------------------------------------------------------------
+
 
 def update_webserver():
     """Handle at most one pending HTTP request per call."""
@@ -653,13 +659,25 @@ def update_webserver():
             # Save to flash only on user interaction, never on 200 ms polling.
             try:
                 _change_calibration(1 if path == b"/calibration/plus" else -1)
-                _send_response(client, json.dumps({"calibration": _calibration}), "application/json")
+                _send_response(
+                    client,
+                    json.dumps({"calibration": _calibration}),
+                    "application/json",
+                )
             except OSError:
-                _send_response(client, '{"error":"flash save failed"}', "application/json", 500)
+                _send_response(
+                    client, '{"error":"flash save failed"}', "application/json", 500
+                )
 
         elif path in (
-            b"/forward", b"/backward", b"/left", b"/right",
-            b"/stop", b"/mode_next", b"/mode_prev", b"/state"
+            b"/forward",
+            b"/backward",
+            b"/left",
+            b"/right",
+            b"/stop",
+            b"/mode_next",
+            b"/mode_prev",
+            b"/state",
         ):
             # main.py receives this command in its next get_command() call.
             _last_command = path[1:].decode()

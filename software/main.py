@@ -1,6 +1,3 @@
-# Copyright 2026
-# Author: Ruben D'Uva, Bernhard Schloss
-
 from machine import Pin, PWM, ADC, I2C
 import random
 import time
@@ -8,33 +5,32 @@ import webserver
 import vl53l0x
 import rgbLED
 
-
 # ===========================================================
 # 1. CONFIGURATION
 # ===========================================================
 
 # Generall
-state = 0                          # 0 = smartphone controll, 1 = obstacle avoidance, 2 = following line
-MANUAL_SPEED = 70                  # general speed
+state = 0  # 0 = smartphone controll, 1 = obstacle avoidance, 2 = following line
+MANUAL_SPEED = 70  # general speed
 LOOP_PAUSE_MS = 5
 DEBUG_INTERVAL_MS = 1000
 
 # following line
-LINE_SPEED = 60                    # speed for following the
+LINE_SPEED = 60  # speed for following the
 KP = 70
 SEARCH_SPEED = 35
 MAX_CORRECTION = 75
-MAX_SEARCH_TIME = 2000             
+MAX_SEARCH_TIME = 2000
 LINE_THRESHOLD = 30000
-DARK_IS_LOW = True                  
+DARK_IS_LOW = True
 
 # obstacle avoidance
-OBSTACLE_DISTANCE = 350            
+OBSTACLE_DISTANCE = 350
 AUTO_SPEED = 70
-EXTRA_TURN_TIME = 50               
-MAX_TURN_TIME = 5000               # time until path finding failure
-TOF_INTERVAL_MS = 50               
-TOF_TIMEOUT_MS = 500               
+EXTRA_TURN_TIME = 50
+MAX_TURN_TIME = 5000  # time until path finding failure
+TOF_INTERVAL_MS = 50
+TOF_TIMEOUT_MS = 500
 
 # Button
 DEBOUNCE_MS = 50
@@ -47,12 +43,7 @@ DEBOUNCE_MS = 50
 # ToF (VL53L0X) via I2C
 # GPIO6 = SDA, GPIO7 = SCL
 
-i2c = I2C(
-    0,
-    scl=Pin(7),
-    sda=Pin(6),
-    freq=400000
-)
+i2c = I2C(0, scl=Pin(7), sda=Pin(6), freq=400000)
 
 vl53 = vl53l0x.VL53L0X(i2c)
 vl53.measurement_timing_budget = 33000
@@ -93,7 +84,7 @@ turn_direction = 0
 turn_failed = False
 
 # line following
-last_line_direction = 0            # -1 = left, +1 = right
+last_line_direction = 0  # -1 = left, +1 = right
 line_lost_timer = None
 
 # button debounce
@@ -105,6 +96,7 @@ last_button_time = start_time
 # ===========================================================
 # 4. motor functions
 # ===========================================================
+
 
 def procent_in_PWM(procent):
     """converts 0–100 % to a 10-bit PWM value."""
@@ -168,6 +160,7 @@ def drive_straight(speed):
 # 5. line sensors
 # ===========================================================
 
+
 def isDark(value):
     """detects black using the calibrated ADC threshold."""
     if DARK_IS_LOW:
@@ -183,6 +176,7 @@ def isLight(value):
 # ===========================================================
 # 6. change mode
 # ===========================================================
+
 
 def set_mode(new_state):
     global state
@@ -218,8 +212,6 @@ def set_mode(new_state):
         rgbLED.set_led("blue", 30)
     elif state == 2:
         rgbLED.set_led("yellow", 30)
-
-
 
 
 # ===========================================================
@@ -370,7 +362,10 @@ try:
                         if distance > OBSTACLE_DISTANCE:
                             if clear_distance_timer is None:
                                 clear_distance_timer = now
-                            elif time.ticks_diff(now, clear_distance_timer) >= EXTRA_TURN_TIME:
+                            elif (
+                                time.ticks_diff(now, clear_distance_timer)
+                                >= EXTRA_TURN_TIME
+                            ):
                                 changing_direction = False
                                 clear_distance_timer = None
                                 drive_straight(AUTO_SPEED)
@@ -435,12 +430,9 @@ try:
         if time.ticks_diff(now, debug_timer) >= DEBUG_INTERVAL_MS:
             debug_timer = now
 
-            
-
         time.sleep_ms(LOOP_PAUSE_MS)
 
 except KeyboardInterrupt:
     print("Programm gestoppt")
 finally:
     stop_motors()
-

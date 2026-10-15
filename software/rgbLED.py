@@ -1,6 +1,3 @@
-# Copyright 2026
-# Author: Ruben D'Uva, Bernhard Schloss
-
 from machine import Pin
 import neopixel
 import time
