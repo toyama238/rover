@@ -7,7 +7,7 @@ The rover is equipped with several sensors and components and can be used as a p
 ## Sensors
 
 * Time-of-Flight distance sensor
-* Brightness sensor
+* Analog Brightness sensor
 
 ## Components
 
@@ -37,5 +37,7 @@ Code fore testing the hardware can be found in the `software/example/` folder.
 
 ## Preview
 
+![PCB Preview](images/rover.png)
+AI enhanced; background removal
 ![PCB Preview](images/pcb-preview.png)
 ![Schematics Preview](images/schematics.png)
