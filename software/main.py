@@ -5,32 +5,35 @@ import webserver
 import vl53l0x
 import rgbLED
 
+
 # ===========================================================
 # 1. CONFIGURATION
 # ===========================================================
 
 # Generall
-state = 0  # 0 = smartphone controll, 1 = obstacle avoidance, 2 = following line
-MANUAL_SPEED = 70  # general speed
+state = 0                          # 0 = smartphone controll, 1 = obstacle avoidance, 2 = following line
+MANUAL_SPEED = 60                  # general speed
 LOOP_PAUSE_MS = 5
 DEBUG_INTERVAL_MS = 1000
 
 # following line
-LINE_SPEED = 60  # speed for following the
-KP = 70
-SEARCH_SPEED = 35
+LINE_SPEED = 50                    # speed for following the
+KP = 40
+SEARCH_SPEED = 50
 MAX_CORRECTION = 75
-MAX_SEARCH_TIME = 2000
+MAX_SEARCH_TIME = 2000             
 LINE_THRESHOLD = 30000
-DARK_IS_LOW = True
+DARK_IS_LOW = True                  
 
 # obstacle avoidance
-OBSTACLE_DISTANCE = 350
-AUTO_SPEED = 70
-EXTRA_TURN_TIME = 50
-MAX_TURN_TIME = 5000  # time until path finding failure
-TOF_INTERVAL_MS = 50
+TOF_INTERVAL_MS = 40
+OBSTACLE_DISTANCE = 320
+AUTO_SPEED = 50
+TURN_SPEED = 40
+EXTRA_TURN_TIME = 80               
+MAX_TURN_TIME = 5000               # time until path finding failure             
 TOF_TIMEOUT_MS = 500
+SAME_TURN_DIRECTION_MS = 500
 
 # Button
 DEBOUNCE_MS = 50
@@ -43,11 +46,17 @@ DEBOUNCE_MS = 50
 # ToF (VL53L0X) via I2C
 # GPIO6 = SDA, GPIO7 = SCL
 
-i2c = I2C(0, scl=Pin(7), sda=Pin(6), freq=400000)
+i2c = I2C(
+    0,
+    scl=Pin(7),
+    sda=Pin(6),
+    freq=400000
+)
 
 vl53 = vl53l0x.VL53L0X(i2c)
 vl53.measurement_timing_budget = 33000
 vl53.start_continuous()
+last_turn_end = None
 
 # motor
 left_motor_1 = PWM(Pin(10), freq=200, duty=0)
@@ -84,7 +93,7 @@ turn_direction = 0
 turn_failed = False
 
 # line following
-last_line_direction = 0  # -1 = left, +1 = right
+last_line_direction = 0            # -1 = left, +1 = right
 line_lost_timer = None
 
 # button debounce
@@ -96,7 +105,6 @@ last_button_time = start_time
 # ===========================================================
 # 4. motor functions
 # ===========================================================
-
 
 def procent_in_PWM(procent):
     """converts 0–100 % to a 10-bit PWM value."""
@@ -160,7 +168,6 @@ def drive_straight(speed):
 # 5. line sensors
 # ===========================================================
 
-
 def isDark(value):
     """detects black using the calibrated ADC threshold."""
     if DARK_IS_LOW:
@@ -177,12 +184,12 @@ def isLight(value):
 # 6. change mode
 # ===========================================================
 
-
 def set_mode(new_state):
     global state
     global changing_direction, clear_distance_timer
     global turn_start_timer, turn_direction, turn_failed
     global last_line_direction, line_lost_timer
+    global last_turn_end
 
     new_state = new_state % 3
 
@@ -201,6 +208,8 @@ def set_mode(new_state):
 
     last_line_direction = 0
     line_lost_timer = None
+    
+    last_turn_end = None
 
     state = new_state
     webserver.set_state(state)
@@ -212,6 +221,8 @@ def set_mode(new_state):
         rgbLED.set_led("blue", 30)
     elif state == 2:
         rgbLED.set_led("yellow", 30)
+
+
 
 
 # ===========================================================
@@ -246,15 +257,11 @@ try:
         webserver.update_webserver()
         command = webserver.get_command()
 
-        # ---------------------------------------------------
-        # 8.2 change mode via web interface
-        # ---------------------------------------------------
         if command == "mode_next":
             set_mode(state + 1)
         elif command == "mode_prev":
             set_mode(state - 1)
         elif command == "state":
-            # compatibility with older webserver versions
             set_mode(state + 1)
 
         # ---------------------------------------------------
@@ -270,40 +277,10 @@ try:
             if button_state != stable_button_state:
                 stable_button_state = button_state
 
-                # pull-up: 0 means pressed
                 if stable_button_state == 0:
                     set_mode(state + 1)
 
         last_button_state = button_state
-
-        # ---------------------------------------------------
-        # 8.4 update distance sensor
-        # ---------------------------------------------------
-        if time.ticks_diff(now, ToF_timer) >= TOF_INTERVAL_MS:
-            ToF_timer = now
-
-            try:
-                reading = vl53.range
-
-                # validate reading; adjust limits for the sensor driver if needed
-                if 0 < reading < 8190:
-                    distance = reading
-                    last_valid_tof = now
-                    webserver.set_distance(distance)
-            except Exception as error:
-                print("ToF error:", error)
-
-        # do not drive with outdated distance readings
-        tof_ok = False
-        if last_valid_tof is not None:
-            if time.ticks_diff(now, last_valid_tof) < TOF_TIMEOUT_MS:
-                tof_ok = True
-
-        # ---------------------------------------------------
-        # 8.5 read line sensors
-        # ---------------------------------------------------
-        sensLinks = line_left.read_u16()
-        sensRechts = line_right.read_u16()
 
         # ---------------------------------------------------
         # 8.6 STATE 0: manual control
@@ -320,64 +297,110 @@ try:
             elif command == "stop":
                 stop_motors()
 
-            # no WLAN watchdog yet: if the connection is lost,
-            # the last driving command may remain active.
-
         # ---------------------------------------------------
         # 8.7 STATE 1: obstacle avoidance
         # ---------------------------------------------------
         elif state == 1:
+            # ---------------------------------------------------
+            # Read ToF sensor
+            # ---------------------------------------------------
+            if time.ticks_diff(now, ToF_timer) >= TOF_INTERVAL_MS:
+                ToF_timer = now
+
+                try:
+                    reading = vl53.range
+
+                    # Accept only valid distance readings
+                    if 0 < reading < 8190:
+                        distance = reading
+                        last_valid_tof = time.ticks_ms()
+                        webserver.set_distance(distance)
+
+                except Exception as error:
+                    print("ToF error:", error)
+
+            # ---------------------------------------------------
+            # Stop if the sensor fails or turning timed out
+            # ---------------------------------------------------
             if turn_failed:
-                # turn timeout: stop until the next mode change
                 stop_motors()
-                rgbLED.set_led("orange", 100)
+                rgbLED.set_led("orange", 30)
 
             else:
+                # ---------------------------------------------------
+                # Normal driving
+                # ---------------------------------------------------
                 if not changing_direction:
                     if distance <= OBSTACLE_DISTANCE:
-                        # obstacle found -> changing direction
+                        # Obstacle detected: start turning
                         changing_direction = True
                         clear_distance_timer = None
                         turn_start_timer = now
 
-                        if random.randint(0, 1) == 0:
-                            turn_direction = -1
+                        # Keep the previous direction if the last turn
+                        # ended less than 500 ms ago
+                        if (
+                            last_turn_end is not None
+                            and time.ticks_diff(now, last_turn_end) < SAME_TURN_DIRECTION_MS
+                        ):
+                            pass
+
                         else:
-                            turn_direction = 1
+                            # Otherwise choose a new random direction
+                            if random.randint(0, 1) == 0:
+                                turn_direction = -1
+                            else:
+                                turn_direction = 1
+
                     else:
                         drive_straight(AUTO_SPEED)
 
+                # ---------------------------------------------------
+                # Turning to find a free path
+                # ---------------------------------------------------
                 if changing_direction:
+
+                    # Stop if no free path is found
                     if time.ticks_diff(now, turn_start_timer) >= MAX_TURN_TIME:
                         stop_motors()
                         changing_direction = False
                         clear_distance_timer = None
                         turn_failed = True
-                    else:
-                        if turn_direction == -1:
-                            drive(-AUTO_SPEED, AUTO_SPEED)
-                        else:
-                            drive(AUTO_SPEED, -AUTO_SPEED)
 
+                    else:
+                        # Turn in the selected direction
+                        if turn_direction == -1:
+                            drive(-TURN_SPEED, TURN_SPEED)
+                        else:
+                            drive(TURN_SPEED, -TURN_SPEED)
+
+                        # Check if the path is clear
                         if distance > OBSTACLE_DISTANCE:
+
                             if clear_distance_timer is None:
                                 clear_distance_timer = now
-                            elif (
-                                time.ticks_diff(now, clear_distance_timer)
-                                >= EXTRA_TURN_TIME
-                            ):
+
+                            elif time.ticks_diff(now, clear_distance_timer) >= EXTRA_TURN_TIME:
                                 changing_direction = False
                                 clear_distance_timer = None
+
+                                # Remember when the turn ended
+                                last_turn_end = now
+
                                 drive_straight(AUTO_SPEED)
+
                         else:
+                            # Obstacle detected again: continue turning
                             clear_distance_timer = None
 
         # ---------------------------------------------------
         # 8.8 STATE 2: P-controller with line search
         # ---------------------------------------------------
         elif state == 2:
-            left_dark = isDark(sensLinks)
-            right_dark = isDark(sensRechts)
+            sens_left = line_left.read_u16()
+            sens_right = line_right.read_u16()
+            left_dark = isDark(sens_left)
+            right_dark = isDark(sens_right)
 
             if not left_dark and not right_dark:
                 # both sensors detect white -> line may be lost
@@ -401,7 +424,7 @@ try:
                 # line detected: proportional control
                 line_lost_timer = None
 
-                error = (sensLinks - sensRechts) / 65535
+                error = (sens_left - sens_right) / 65535
                 correction = KP * error
                 correction = max(-MAX_CORRECTION, min(MAX_CORRECTION, correction))
 
@@ -430,9 +453,12 @@ try:
         if time.ticks_diff(now, debug_timer) >= DEBUG_INTERVAL_MS:
             debug_timer = now
 
+            
+
         time.sleep_ms(LOOP_PAUSE_MS)
 
 except KeyboardInterrupt:
     print("Programm gestoppt")
 finally:
     stop_motors()
+

@@ -6,17 +6,8 @@
 
 
 # TODOs für die Makerfaire
-- 3D-Drucke
-- Teilesets zusammenstellen
-- Software fertigstellen
-- Anleitung für Software auf Github
-- Aufbauanleitung erstellen
-- Aufbauanleitung laminieren
-- Github fertigstellen
 - Crawler und FPV-Kamera testen
 - Crawler-Akkus laden
-- 3D druck löcher bohren
-- ESP mit software beladen
 
 
 # Kartong Inhalt
@@ -30,8 +21,8 @@
 - bolzen-schraube M3x30 +
 - mutter (2x) M3 +
 - Kabelbinder (2x) +
-- Motoren (2x)
-- Räder (2x)
-- 3D Parts (5-Teile)
-- PCB, Motortreiber
+- PCB, Motortreiber +
+- Motoren (2x) +
+- Räder (2x) +
+- 3D Parts (5-Teile) +
 
