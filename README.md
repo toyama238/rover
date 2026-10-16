@@ -120,6 +120,4 @@ Contributions, feedback, and experiments are welcome through this repository.
 
 ## License
 
-All original code, 3D models, PCB designs, and documentation created by the TOYAMIX ROVER project are free to use.
-
-Third-party components, such as the `vl53l0x` library, remain subject to their respective licenses and copyright notices. Their original authors retain their rights.
+Can be found in `LICENSE.txt`.
