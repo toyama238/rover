@@ -32,6 +32,7 @@ The rover uses a custom PCB, 3D-printed parts, two independently controlled moto
 | USB power bank | Power supply |
 
 The electronics are connected through the custom PCB. See the hardware designs for additional details.
+The PCB also provides two LED connectors with built-in current-limiting resistors.
 
 ## Getting started
 
