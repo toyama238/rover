@@ -122,3 +122,9 @@ Contributions, feedback, and experiments are welcome through this repository.
 ## License
 
 Can be found in `LICENSE.txt`.
+
+## Contact
+
+Bei Fragen oder Feedback contaktieren Sie uns gerne unter: **toyamix@gmx.net**
+
+If you have questions or want to commit feedback, feal free to contact us: **toyamix@gmx.net**
